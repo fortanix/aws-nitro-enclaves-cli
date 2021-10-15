@@ -3,7 +3,7 @@
 
 use crate::docker::DockerError::CredentialsError;
 use futures::stream::StreamExt;
-use log::{debug, error, info};
+use log::{debug, error};
 use serde_json::value::Value;
 use shiplift::RegistryAuth;
 use shiplift::{BuildOptions, Docker, PullOptions};
@@ -215,7 +215,7 @@ impl DockerUtil {
                                 error!("{:?}", err_msg.clone());
                                 break Err(DockerError::PullError);
                             } else {
-                                info!("{}", msg);
+                                debug!("{}", msg);
                             }
                         }
                         Err(e) => {
@@ -254,7 +254,7 @@ impl DockerUtil {
                                 error!("{:?}", err_msg.clone());
                                 break Err(DockerError::BuildError);
                             } else {
-                                info!("{}", msg);
+                                debug!("{}", msg);
                             }
                         }
                         Err(e) => {
