@@ -47,11 +47,23 @@ pub const CID_TO_CONSOLE_PORT_OFFSET: u32 = 10000;
 
 static BLOBS_DIR: OnceCell<TempDir> = OnceCell::new();
 
-// TODO: aarch64
+#[cfg(target_arch = "x86_64")]
 static BLOBS_FILES: Lazy<HashMap<&'static str, Vec<u8>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     map.insert("bzImage", include_bytes!("../blobs/x86_64/bzImage").to_vec());
     map.insert("bzImage.config", include_bytes!("../blobs/x86_64/bzImage.config").to_vec());
+    map.insert("cmdline", include_bytes!("../blobs/x86_64/cmdline").to_vec());
+    map.insert("init", include_bytes!("../blobs/x86_64/init").to_vec());
+    map.insert("linuxkit", include_bytes!("../blobs/x86_64/linuxkit").to_vec());
+    map.insert("nsm.ko", include_bytes!("../blobs/x86_64/nsm.ko").to_vec());
+    map
+});
+
+#[cfg(target_arch = "aarch64")]
+static BLOBS_FILES: Lazy<HashMap<&'static str, Vec<u8>>> = Lazy::new(|| {
+    let mut map = HashMap::new();
+    map.insert("Image", include_bytes!("../blobs/aarch64/Image").to_vec());
+    map.insert("Image.config", include_bytes!("../blobs/x86_64/Image.config").to_vec());
     map.insert("cmdline", include_bytes!("../blobs/x86_64/cmdline").to_vec());
     map.insert("init", include_bytes!("../blobs/x86_64/init").to_vec());
     map.insert("linuxkit", include_bytes!("../blobs/x86_64/linuxkit").to_vec());
