@@ -63,11 +63,11 @@ static BLOBS_FILES: Lazy<HashMap<&'static str, Vec<u8>>> = Lazy::new(|| {
 static BLOBS_FILES: Lazy<HashMap<&'static str, Vec<u8>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     map.insert("Image", include_bytes!("../blobs/aarch64/Image").to_vec());
-    map.insert("Image.config", include_bytes!("../blobs/x86_64/Image.config").to_vec());
-    map.insert("cmdline", include_bytes!("../blobs/x86_64/cmdline").to_vec());
-    map.insert("init", include_bytes!("../blobs/x86_64/init").to_vec());
-    map.insert("linuxkit", include_bytes!("../blobs/x86_64/linuxkit").to_vec());
-    map.insert("nsm.ko", include_bytes!("../blobs/x86_64/nsm.ko").to_vec());
+    map.insert("Image.config", include_bytes!("../blobs/aarch64/Image.config").to_vec());
+    map.insert("cmdline", include_bytes!("../blobs/aarch64/cmdline").to_vec());
+    map.insert("init", include_bytes!("../blobs/aarch64/init").to_vec());
+    map.insert("linuxkit", include_bytes!("../blobs/aarch64/linuxkit").to_vec());
+    map.insert("nsm.ko", include_bytes!("../blobs/aarch64/nsm.ko").to_vec());
     map
 });
 
