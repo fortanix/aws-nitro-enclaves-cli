@@ -1,17 +1,16 @@
 // Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 #![deny(missing_docs)]
-#![deny(warnings)]
+//![deny(warnings)]
 
 //! This crate provides the functionality for the Nitro CLI process.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::convert::TryFrom;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use log::{debug, info};
 use once_cell::sync::{Lazy, OnceCell};
@@ -48,34 +47,27 @@ pub const CID_TO_CONSOLE_PORT_OFFSET: u32 = 10000;
 static BLOBS_DIR: OnceCell<TempDir> = OnceCell::new();
 
 #[cfg(target_arch = "x86_64")]
-static BLOBS_FILES: Lazy<HashMap<&'static str, Vec<u8>>> = Lazy::new(|| {
-    let mut map = HashMap::new();
-    map.insert("bzImage", include_bytes!("../blobs/x86_64/bzImage").to_vec());
-    map.insert("bzImage.config", include_bytes!("../blobs/x86_64/bzImage.config").to_vec());
-    map.insert("cmdline", include_bytes!("../blobs/x86_64/cmdline").to_vec());
-    map.insert("init", include_bytes!("../blobs/x86_64/init").to_vec());
-    map.insert("linuxkit", include_bytes!("../blobs/x86_64/linuxkit").to_vec());
-    map.insert("nsm.ko", include_bytes!("../blobs/x86_64/nsm.ko").to_vec());
-    map
+static BLOBS_FILES: Lazy<Vec<&'static str>> = Lazy::new(|| {
+    vec![
+        "bzImage",
+        "bzImage.config",
+        "cmdline",
+        "init",
+        "linuxkit",
+        "nsm.ko",
+    ]
 });
 
 #[cfg(target_arch = "aarch64")]
-static BLOBS_FILES: Lazy<HashMap<&'static str, Vec<u8>>> = Lazy::new(|| {
-    let mut map = HashMap::new();
-    map.insert("Image", include_bytes!("../blobs/aarch64/Image").to_vec());
-    map.insert("Image.config", include_bytes!("../blobs/aarch64/Image.config").to_vec());
-    map.insert("cmdline", include_bytes!("../blobs/aarch64/cmdline").to_vec());
-    map.insert("init", include_bytes!("../blobs/aarch64/init").to_vec());
-    map.insert("linuxkit", include_bytes!("../blobs/aarch64/linuxkit").to_vec());
-    map.insert("nsm.ko", include_bytes!("../blobs/aarch64/nsm.ko").to_vec());
-    map
-});
-
-static BLOBS_EXECUTABLES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    let mut set = HashSet::new();
-    set.insert("init");
-    set.insert("linuxkit");
-    set
+static BLOBS_FILES: Lazy<Vec<&'static str>> = Lazy::new(|| {
+    vec![
+        "Image",
+        "Image.config",
+        "cmdline",
+        "init",
+        "linuxkit",
+        "nsm.ko",
+    ]
 });
 
 /// Build an enclave image file with the provided arguments.
@@ -83,6 +75,7 @@ pub fn build_enclaves(args: BuildEnclavesArgs) -> NitroCliResult<()> {
     debug!("build_enclaves");
     info!("Start building the Enclave Image...");
     build_from_docker(
+        &args.resources_dir,
         &args.docker_uri,
         &args.docker_dir,
         &args.output,
@@ -95,7 +88,7 @@ pub fn build_enclaves(args: BuildEnclavesArgs) -> NitroCliResult<()> {
 
 /// Initializes a temporary directory containing the blobs needed for converting a docker to
 /// an EIF file.
-fn init_blobs() -> NitroCliResult<TempDir> {
+fn init_blobs(resources_dir: &PathBuf) -> NitroCliResult<TempDir> {
     info!("Initializing nitro blobs");
     let blobs_temp_dir = TempDir::new("nitro_blobs").map_err(|e| {
         new_nitro_cli_failure!(
@@ -103,31 +96,18 @@ fn init_blobs() -> NitroCliResult<TempDir> {
             NitroCliErrorEnum::FileOperationFailure
         )
     })?;
+    let blobs_temp_path = blobs_temp_dir.path();
 
     debug!("Storing blobs in {:?}", blobs_temp_dir);
 
-    for (blob_name, blob_value) in BLOBS_FILES.iter() {
-        let blob_path = blobs_temp_dir.path().join(blob_name);
-        let mut blob_file = File::create(&blob_path).map_err(|e| new_nitro_cli_failure!(
+    for blob_name in BLOBS_FILES.iter() {
+        let src = Path::new(&resources_dir).join(blob_name);
+        let dst = Path::new(&blobs_temp_path.join(blob_name)).to_path_buf();
+        debug!("Copying {} from {:?} to {:?}", blob_name, src, dst);
+        fs::copy(src, dst).map_err(|e| new_nitro_cli_failure!(
             &format!("Could not create blob file {:?}", e),
             NitroCliErrorEnum::FileOperationFailure
         ))?;
-        blob_file.write_all(blob_value).map_err(|e| new_nitro_cli_failure!(
-            &format!("Could not write to blob file {:?}", e),
-            NitroCliErrorEnum::FileOperationFailure
-        ))?;
-        if BLOBS_EXECUTABLES.contains(blob_name) {
-            let mut perms = blob_file.metadata().map_err(|e| new_nitro_cli_failure!(
-                &format!("Could not get blob file metadata {:?}", e),
-                NitroCliErrorEnum::FileOperationFailure
-            ))?.permissions();
-            perms.set_mode(0o755);
-            blob_file.set_permissions(perms).map_err(|e| new_nitro_cli_failure!(
-                &format!("Could not set blob file permissions {:?}", e),
-                NitroCliErrorEnum::FileOperationFailure
-            ))?;
-        }
-        debug!("Created blob in {:?}", blob_path);
     }
 
     Ok(blobs_temp_dir)
@@ -135,13 +115,14 @@ fn init_blobs() -> NitroCliResult<TempDir> {
 
 /// Build an enclave image file from a Docker image.
 pub fn build_from_docker(
+    resources_dir: &PathBuf,
     docker_uri: &str,
     docker_dir: &Option<String>,
     output_path: &str,
     signing_certificate: &Option<String>,
     private_key: &Option<String>,
 ) -> NitroCliResult<(File, BTreeMap<String, String>)> {
-    let blobs_dir = BLOBS_DIR.get_or_try_init(|| init_blobs())?;
+    let blobs_dir = BLOBS_DIR.get_or_try_init(|| init_blobs(resources_dir))?;
     let blobs_path = blobs_dir.path().to_str().unwrap().to_string();
     let cmdline_file_path = format!("{}/cmdline", blobs_path);
     let mut cmdline_file = File::open(cmdline_file_path.clone()).map_err(|e| {

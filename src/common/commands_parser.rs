@@ -9,6 +9,7 @@ use libc::VMADDR_CID_HOST;
 use libc::VMADDR_CID_LOCAL;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
+use std::path::{Path, PathBuf};
 
 use crate::common::{NitroCliErrorEnum, NitroCliFailure, NitroCliResult, VMADDR_CID_PARENT};
 use crate::get_id_by_name;
@@ -89,6 +90,8 @@ impl RunEnclavesArgs {
 /// The arguments used by the `build-enclave` command.
 #[derive(Debug, Clone)]
 pub struct BuildEnclavesArgs {
+    /// The URI where AWS resources can be found (e.g., kernel for the enclave, ...)
+    pub resources_dir: PathBuf,
     /// The URI to the Docker image.
     pub docker_uri: String,
     /// The directory containing the Docker image.
@@ -126,6 +129,7 @@ impl BuildEnclavesArgs {
         };
 
         Ok(BuildEnclavesArgs {
+            resources_dir: Path::new("/usr/share/nitro_enclaves/blobs/").to_path_buf(),
             docker_uri: parse_docker_tag(args).ok_or_else(|| {
                 new_nitro_cli_failure!(
                     "`docker-uri` argument not found",
