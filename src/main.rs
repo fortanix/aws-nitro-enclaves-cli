@@ -17,7 +17,7 @@ use nitro_cli::common::commands_parser::{
     TerminateEnclavesArgs,
 };
 use nitro_cli::common::document_errors::explain_error;
-use nitro_cli::common::json_output::{EnclaveDescribeInfo, EnclaveRunInfo, EnclaveTerminateInfo};
+use nitro_cli::common::json_output::{EnclaveBuildInfo, EnclaveDescribeInfo, EnclaveRunInfo, EnclaveTerminateInfo};
 use nitro_cli::common::{
     enclave_proc_command_send_single, logger, NitroCliErrorEnum, NitroCliFailure, NitroCliResult,
 };
@@ -206,9 +206,15 @@ fn main() {
                 })
                 .ok_or_exit_with_errno(None);
             build_enclaves(build_args)
-                .map_err(|e| {
-                    e.add_subaction("Failed to build enclave".to_string())
-                        .set_action(BUILD_ENCLAVE_STR.to_string())
+                .map(|(_file_output, measurements)| {
+                    let info = EnclaveBuildInfo::new(measurements);
+                    let info = serde_json::to_string_pretty(&info).map_err(|err| new_nitro_cli_failure!(
+                            &format!("Failed to display EnclaveBuild data: {:?}", err),
+                            NitroCliErrorEnum::SerdeError
+                        ));
+                    if let Ok(info) = info {
+                        println!("{}", info);
+                    }
                 })
                 .ok_or_exit_with_errno(None);
         }

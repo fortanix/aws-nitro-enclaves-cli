@@ -9,11 +9,15 @@ use libc::VMADDR_CID_HOST;
 use libc::VMADDR_CID_LOCAL;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
+use std::path::PathBuf;
 
 use crate::common::{NitroCliErrorEnum, NitroCliFailure, NitroCliResult, VMADDR_CID_PARENT};
 use crate::get_id_by_name;
 use crate::new_nitro_cli_failure;
 use crate::utils::PcrType;
+
+/// Default blobs path to be used if the corresponding environment variable is not set.
+const DEFAULT_BLOBS_PATH: &str = "/usr/share/nitro_enclaves/blobs/";
 
 /// The arguments used by the `run-enclave` command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,9 +90,42 @@ impl RunEnclavesArgs {
     }
 }
 
+/// Returns the value of the `NITRO_CLI_BLOBS` environment variable.
+///
+/// This variable specifies where all the blobs necessary for building
+/// an enclave image are stored. As of now the blobs are:
+/// - *bzImage*: A kernel image if the local arch is x86_64 or
+/// - *Image*  : A kernel image if the local arch is aarch64
+/// - *init*: The initial init process that is bootstraping the environment.
+/// - *linuxkit*: A slightly modified version of linuxkit.
+/// - *cmdline*: A file containing the kernel commandline.
+fn blobs_path(resources_dir: Option<&PathBuf>) -> NitroCliResult<PathBuf> {
+    let resources_dir = if let Some(resources_dir) = resources_dir {
+        resources_dir.to_owned()
+    } else {
+        // TODO Improve error message with a suggestion to the user
+        // consider using the default path used by rpm install
+        let blobs_res = std::env::var("NITRO_CLI_BLOBS")
+            .unwrap_or(DEFAULT_BLOBS_PATH.to_string());
+
+        PathBuf::from(blobs_res)
+    };
+
+    if !resources_dir.is_dir() {
+        Err(new_nitro_cli_failure!(
+            &format!("Resource directory isn't a directory: {}", resources_dir.as_path().display()),
+            NitroCliErrorEnum::InvalidArgument
+        ))
+    } else {
+        Ok(resources_dir)
+    }
+}
+
 /// The arguments used by the `build-enclave` command.
 #[derive(Debug, Clone)]
 pub struct BuildEnclavesArgs {
+    /// The URI where AWS resources can be found (e.g., kernel for the enclave, ...)
+    pub resources_dir: PathBuf,
     /// The URI to the Docker image.
     pub docker_uri: String,
     /// The directory containing the Docker image.
@@ -126,6 +163,7 @@ impl BuildEnclavesArgs {
         };
 
         Ok(BuildEnclavesArgs {
+            resources_dir: blobs_path(None)?,
             docker_uri: parse_docker_tag(args).ok_or_else(|| {
                 new_nitro_cli_failure!(
                     "`docker-uri` argument not found",

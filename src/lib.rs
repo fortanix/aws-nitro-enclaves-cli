@@ -5,6 +5,28 @@
 
 //! This crate provides the functionality for the Nitro CLI process.
 
+use std::collections::BTreeMap;
+use std::convert::TryFrom;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Write};
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
+
+use log::{debug, info};
+use sha2::{Digest, Sha384};
+
+use common::{enclave_proc_command_send_single, get_sockets_dir_path};
+use common::{EnclaveProcessCommandType, NitroCliErrorEnum, NitroCliFailure, NitroCliResult};
+use common::commands_parser::{BuildEnclavesArgs, EmptyArgs, RunEnclavesArgs};
+use common::json_output::{DescribeEifInfo, EnclaveBuildInfo, EnclaveTerminateInfo};
+use eif_defs::eif_hasher::EifHasher;
+use eif_utils::{EifReader, get_pcrs};
+pub use eif_utils::EifBuilder;
+use enclave_proc_comm::{
+    enclave_proc_command_send_all, enclave_proc_handle_outputs, enclave_process_handle_all_replies,
+};
+use utils::{Console, PcrType};
+
 /// The common module (shared between the CLI and enclave process).
 pub mod common;
 /// The enclave process module.
@@ -14,63 +36,46 @@ pub mod enclave_proc_comm;
 /// The CLI-specific utilities module.
 pub mod utils;
 
-use eif_defs::eif_hasher::EifHasher;
-use eif_utils::{get_pcrs, EifReader};
-use log::debug;
-use sha2::{Digest, Sha384};
-use std::collections::BTreeMap;
-use std::convert::TryFrom;
-use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
-
-use common::commands_parser::{BuildEnclavesArgs, EmptyArgs, RunEnclavesArgs};
-use common::json_output::{DescribeEifInfo, EnclaveBuildInfo, EnclaveTerminateInfo};
-use common::{enclave_proc_command_send_single, get_sockets_dir_path};
-use common::{EnclaveProcessCommandType, NitroCliErrorEnum, NitroCliFailure, NitroCliResult};
-use enclave_proc_comm::{
-    enclave_proc_command_send_all, enclave_proc_handle_outputs, enclave_process_handle_all_replies,
-};
-use log::info;
-
-use utils::{Console, PcrType};
-
 /// Hypervisor CID as defined by <http://man7.org/linux/man-pages/man7/vsock.7.html>.
 pub const VMADDR_CID_HYPERVISOR: u32 = 0;
 
 /// An offset applied to an enclave's CID in order to determine its console port.
 pub const CID_TO_CONSOLE_PORT_OFFSET: u32 = 10000;
 
-/// Default blobs path to be used if the corresponding environment variable is not set.
-const DEFAULT_BLOBS_PATH: &str = "/usr/share/nitro_enclaves/blobs/";
-
 /// Build an enclave image file with the provided arguments.
-pub fn build_enclaves(args: BuildEnclavesArgs) -> NitroCliResult<()> {
+pub fn build_enclaves(args: BuildEnclavesArgs) -> NitroCliResult<(File, BTreeMap<String, String>)> {
     debug!("build_enclaves");
-    eprintln!("Start building the Enclave Image...");
+    info!("Start building the Enclave Image...");
     build_from_docker(
+        &args.resources_dir,
         &args.docker_uri,
         &args.docker_dir,
         &args.output,
         &args.signing_certificate,
         &args.private_key,
     )
-    .map_err(|e| e.add_subaction("Failed to build EIF from docker".to_string()))?;
-    Ok(())
+    .map_err(|e| e.add_subaction("Failed to build EIF from docker".to_string()))
 }
 
 /// Build an enclave image file from a Docker image.
 pub fn build_from_docker(
+    resources_dir: &PathBuf,
     docker_uri: &str,
     docker_dir: &Option<String>,
     output_path: &str,
     signing_certificate: &Option<String>,
     private_key: &Option<String>,
 ) -> NitroCliResult<(File, BTreeMap<String, String>)> {
-    let blobs_path =
-        blobs_path().map_err(|e| e.add_subaction("Failed to retrieve blobs path".to_string()))?;
-    let cmdline_file_path = format!("{}/cmdline", blobs_path);
+    fn create_path(dir: &PathBuf, file_name: &str) -> NitroCliResult<String> {
+        dir.join(file_name)
+            .into_os_string()
+            .into_string()
+            .map_err(|e| new_nitro_cli_failure!(
+                &format!("Could not create path {:?}", e),
+                NitroCliErrorEnum::InvalidArgument
+            ))
+    }
+    let cmdline_file_path = create_path(&resources_dir, "cmdline")?;
     let mut cmdline_file = File::open(cmdline_file_path.clone()).map_err(|e| {
         new_nitro_cli_failure!(
             &format!("Could not open kernel command line file: {:?}", e),
@@ -110,56 +115,41 @@ pub fn build_from_docker(
 
     let mut docker2eif = enclave_build::Docker2Eif::new(
         docker_uri.to_string(),
-        format!("{}/init", blobs_path),
-        format!("{}/nsm.ko", blobs_path),
-        format!("{}/{}", blobs_path, kernel_image_name),
+        create_path(&resources_dir, "init")?,
+        create_path(&resources_dir, "nsm.ko")?,
+        create_path(&resources_dir, kernel_image_name)?,
         cmdline.trim().to_string(),
-        format!("{}/linuxkit", blobs_path),
+        create_path(&resources_dir, "linuxkit")?,
         &mut file_output,
         artifacts_path()?,
         signing_certificate,
         private_key,
     )
-    .map_err(|err| {
-        new_nitro_cli_failure!(
-            &format!("Failed to create EIF image: {:?}", err),
-            NitroCliErrorEnum::EifBuildingError
-        )
-    })?;
+    .map_err(|err| new_nitro_cli_failure!(
+        &format!("Failed to create EIF image: {:?}", err),
+        NitroCliErrorEnum::EifBuildingError
+    ))?;
 
     if let Some(docker_dir) = docker_dir {
+        info!("Building docker image, this will take a moment");
         docker2eif
             .build_docker_image(docker_dir.clone())
-            .map_err(|err| {
-                new_nitro_cli_failure!(
-                    &format!("Failed to build docker image: {:?}", err),
-                    NitroCliErrorEnum::DockerImageBuildError
-                )
-            })?;
+            .map_err(|err| new_nitro_cli_failure!(
+                &format!("Failed to build docker image: {:?}", err),
+                NitroCliErrorEnum::DockerImageBuildError
+            ))?;
     } else {
-        docker2eif.pull_docker_image().map_err(|err| {
-            new_nitro_cli_failure!(
-                &format!("Failed to pull docker image: {:?}", err),
-                NitroCliErrorEnum::DockerImagePullError
-            )
-        })?;
+        info!("Pulling docker image `{}`", docker_uri);
+        docker2eif.pull_docker_image().map_err(|err| new_nitro_cli_failure!(
+            &format!("Failed to pull docker image: {:?}", err),
+            NitroCliErrorEnum::DockerImagePullError
+        ))?;
     }
-    let measurements = docker2eif.create().map_err(|err| {
-        new_nitro_cli_failure!(
-            &format!("Failed to create EIF image: {:?}", err),
-            NitroCliErrorEnum::EifBuildingError
-        )
-    })?;
-    eprintln!("Enclave Image successfully created.");
 
-    let info = EnclaveBuildInfo::new(measurements.clone());
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&info).map_err(|err| new_nitro_cli_failure!(
-            &format!("Failed to display EnclaveBuild data: {:?}", err),
-            NitroCliErrorEnum::SerdeError
-        ))?
-    );
+    let measurements = docker2eif.create().map_err(|err| new_nitro_cli_failure!(
+        &format!("Failed to create EIF image: {:?}", err),
+        NitroCliErrorEnum::EifBuildingError
+    ))?;
 
     Ok((file_output, measurements))
 }
@@ -253,23 +243,6 @@ pub fn describe_eif(eif_path: String) -> NitroCliResult<DescribeEifInfo> {
     );
 
     Ok(info)
-}
-
-/// Returns the value of the `NITRO_CLI_BLOBS` environment variable.
-///
-/// This variable specifies where all the blobs necessary for building
-/// an enclave image are stored. As of now the blobs are:
-/// - *bzImage*: A kernel image if the local arch is x86_64 or
-/// - *Image*  : A kernel image if the local arch is aarch64
-/// - *init*: The initial init process that is bootstraping the environment.
-/// - *linuxkit*: A slightly modified version of linuxkit.
-/// - *cmdline*: A file containing the kernel commandline.
-fn blobs_path() -> NitroCliResult<String> {
-    // TODO Improve error message with a suggestion to the user
-    // consider using the default path used by rpm install
-    let blobs_res = std::env::var("NITRO_CLI_BLOBS");
-
-    Ok(blobs_res.unwrap_or_else(|_| DEFAULT_BLOBS_PATH.to_string()))
 }
 
 /// Returns the value of the `NITRO_CLI_ARTIFACTS` environment variable.

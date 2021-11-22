@@ -27,6 +27,8 @@ vmm-sys-util = "0.8.0"
 sha2 = "0.9.5"
 hex = "0.3.2"
 aws-nitro-enclaves-cose = "0.1"
+once_cell = "1.8"
+tempdir = "0.3"
 
 lazy_static = "1.4.0"
 

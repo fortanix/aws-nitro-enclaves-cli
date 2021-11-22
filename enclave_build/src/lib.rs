@@ -14,6 +14,7 @@ use eif_utils::{EifBuilder, SignEnclaveInfo};
 use sha2::Digest;
 use std::collections::BTreeMap;
 use yaml_generator::YamlGenerator;
+use log::{debug, info};
 
 pub struct Docker2Eif<'a> {
     docker_image: String,
@@ -131,6 +132,7 @@ impl<'a> Docker2Eif<'a> {
             env_file.path().to_str().unwrap().to_string(),
         );
 
+        debug!("Creating bootstrap ramfs");
         let ramfs_config_file = yaml_generator.get_bootstrap_ramfs().map_err(|e| {
             eprintln!("Ramfs error: {:?}", e);
             Docker2EifError::RamfsError
@@ -162,6 +164,7 @@ impl<'a> Docker2Eif<'a> {
             return Err(Docker2EifError::LinuxkitExecError);
         }
 
+        debug!("Creating customer ramfs");
         // Prefix the docker image filesystem, as expected by init
         let output = Command::new(&self.linuxkit_path)
             .args(&[
@@ -203,13 +206,14 @@ impl<'a> Docker2Eif<'a> {
             flags,
         );
 
-        // Linuxkit adds -initrd.img sufix to the file names.
+        // Linuxkit adds -initrd.img suffix to the file names.
         let bootstrap_ramfs = format!("{}-initrd.img", bootstrap_ramfs);
         let customer_ramfs = format!("{}-initrd.img", customer_ramfs);
 
         build.add_ramdisk(Path::new(&bootstrap_ramfs));
         build.add_ramdisk(Path::new(&customer_ramfs));
 
+        info!("Building eif file:");
         Ok(build.write_to(self.output))
     }
 }
