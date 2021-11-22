@@ -219,10 +219,10 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
                 .map_err(|e| format!("Failed to seek after EIF section: {:?}", e))?;
 
             match section.section_type {
-                EifSectionType::EifSectionKernel => kernel = Some(buf.clone()),
-                EifSectionType::EifSectionCmdline => cmdline = Some(buf.clone()),
-                EifSectionType::EifSectionRamdisk => ramdisks.push(buf.clone()),
-                EifSectionType::EifSectionSignature => signature = Some(buf.clone()),
+                EifSectionType::EifSectionKernel => kernel = Some(buf),
+                EifSectionType::EifSectionCmdline => cmdline = Some(buf),
+                EifSectionType::EifSectionRamdisk => ramdisks.push(buf),
+                EifSectionType::EifSectionSignature => signature = Some(buf),
                 EifSectionType::EifSectionInvalid | EifSectionType::EifSectionMetadata => {
                     return Err("Eif contains an invalid section".to_string());
                 }
@@ -251,7 +251,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         })
     }
 
-    pub fn add_sign_info(&mut self, cert_path: &str, key_path: &str) -> Result<(), String> {
+    pub fn set_sign_info(&mut self, cert_path: &str, key_path: &str) -> Result<(), String> {
         self.sign_info = Some(SignEnclaveInfo::new(cert_path, key_path)
             .map_err(|err| format!("{:?}", err))?);
         Ok(())
@@ -333,8 +333,8 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             + self.cmdline_size()
             + EifSectionHeader::size() as u64
             + self.ramdisks[0..index]
-            .iter()
-            .fold(0, |total_len, ramdisk| total_len + ramdisk.len() as u64 + EifSectionHeader::size() as u64)
+                .iter()
+                .fold(0, |total_len, ramdisk| total_len + ramdisk.len() as u64 + EifSectionHeader::size() as u64)
     }
 
     fn ramdisk_size(&self, ramdisk: &Vec<u8>) -> u64 {

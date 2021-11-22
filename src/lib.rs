@@ -1,21 +1,19 @@
 // Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 #![deny(missing_docs)]
-//![deny(warnings)]
+#![deny(warnings)]
 
 //! This crate provides the functionality for the Nitro CLI process.
 
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use log::{debug, info};
-use once_cell::sync::{Lazy, OnceCell};
 use sha2::{Digest, Sha384};
-use tempdir::TempDir;
 
 use common::{enclave_proc_command_send_single, get_sockets_dir_path};
 use common::{EnclaveProcessCommandType, NitroCliErrorEnum, NitroCliFailure, NitroCliResult};
@@ -44,34 +42,8 @@ pub const VMADDR_CID_HYPERVISOR: u32 = 0;
 /// An offset applied to an enclave's CID in order to determine its console port.
 pub const CID_TO_CONSOLE_PORT_OFFSET: u32 = 10000;
 
-static BLOBS_DIR: OnceCell<TempDir> = OnceCell::new();
-
-#[cfg(target_arch = "x86_64")]
-static BLOBS_FILES: Lazy<Vec<&'static str>> = Lazy::new(|| {
-    vec![
-        "bzImage",
-        "bzImage.config",
-        "cmdline",
-        "init",
-        "linuxkit",
-        "nsm.ko",
-    ]
-});
-
-#[cfg(target_arch = "aarch64")]
-static BLOBS_FILES: Lazy<Vec<&'static str>> = Lazy::new(|| {
-    vec![
-        "Image",
-        "Image.config",
-        "cmdline",
-        "init",
-        "linuxkit",
-        "nsm.ko",
-    ]
-});
-
 /// Build an enclave image file with the provided arguments.
-pub fn build_enclaves(args: BuildEnclavesArgs) -> NitroCliResult<()> {
+pub fn build_enclaves(args: BuildEnclavesArgs) -> NitroCliResult<(File, BTreeMap<String, String>)> {
     debug!("build_enclaves");
     info!("Start building the Enclave Image...");
     build_from_docker(
@@ -82,35 +54,7 @@ pub fn build_enclaves(args: BuildEnclavesArgs) -> NitroCliResult<()> {
         &args.signing_certificate,
         &args.private_key,
     )
-    .map_err(|e| e.add_subaction("Failed to build EIF from docker".to_string()))?;
-    Ok(())
-}
-
-/// Initializes a temporary directory containing the blobs needed for converting a docker to
-/// an EIF file.
-fn init_blobs(resources_dir: &PathBuf) -> NitroCliResult<TempDir> {
-    info!("Initializing nitro blobs");
-    let blobs_temp_dir = TempDir::new("nitro_blobs").map_err(|e| {
-        new_nitro_cli_failure!(
-            &format!("Failed to create nitro blobs directory {:?}", e),
-            NitroCliErrorEnum::FileOperationFailure
-        )
-    })?;
-    let blobs_temp_path = blobs_temp_dir.path();
-
-    debug!("Storing blobs in {:?}", blobs_temp_dir);
-
-    for blob_name in BLOBS_FILES.iter() {
-        let src = Path::new(&resources_dir).join(blob_name);
-        let dst = Path::new(&blobs_temp_path.join(blob_name)).to_path_buf();
-        debug!("Copying {} from {:?} to {:?}", blob_name, src, dst);
-        fs::copy(src, dst).map_err(|e| new_nitro_cli_failure!(
-            &format!("Could not create blob file {:?}", e),
-            NitroCliErrorEnum::FileOperationFailure
-        ))?;
-    }
-
-    Ok(blobs_temp_dir)
+    .map_err(|e| e.add_subaction("Failed to build EIF from docker".to_string()))
 }
 
 /// Build an enclave image file from a Docker image.
@@ -122,9 +66,16 @@ pub fn build_from_docker(
     signing_certificate: &Option<String>,
     private_key: &Option<String>,
 ) -> NitroCliResult<(File, BTreeMap<String, String>)> {
-    let blobs_dir = BLOBS_DIR.get_or_try_init(|| init_blobs(resources_dir))?;
-    let blobs_path = blobs_dir.path().to_str().unwrap().to_string();
-    let cmdline_file_path = format!("{}/cmdline", blobs_path);
+    fn create_path(dir: &PathBuf, file_name: &str) -> NitroCliResult<String> {
+        dir.join(file_name)
+            .into_os_string()
+            .into_string()
+            .map_err(|e| new_nitro_cli_failure!(
+                &format!("Could not create path {:?}", e),
+                NitroCliErrorEnum::InvalidArgument
+            ))
+    }
+    let cmdline_file_path = create_path(&resources_dir, "cmdline")?;
     let mut cmdline_file = File::open(cmdline_file_path.clone()).map_err(|e| {
         new_nitro_cli_failure!(
             &format!("Could not open kernel command line file: {:?}", e),
@@ -164,11 +115,11 @@ pub fn build_from_docker(
 
     let mut docker2eif = enclave_build::Docker2Eif::new(
         docker_uri.to_string(),
-        format!("{}/init", blobs_path),
-        format!("{}/nsm.ko", blobs_path),
-        format!("{}/{}", blobs_path, kernel_image_name),
+        create_path(&resources_dir, "init")?,
+        create_path(&resources_dir, "nsm.ko")?,
+        create_path(&resources_dir, kernel_image_name)?,
         cmdline.trim().to_string(),
-        format!("{}/linuxkit", blobs_path),
+        create_path(&resources_dir, "linuxkit")?,
         &mut file_output,
         artifacts_path()?,
         signing_certificate,
@@ -199,6 +150,7 @@ pub fn build_from_docker(
         &format!("Failed to create EIF image: {:?}", err),
         NitroCliErrorEnum::EifBuildingError
     ))?;
+
     Ok((file_output, measurements))
 }
 
