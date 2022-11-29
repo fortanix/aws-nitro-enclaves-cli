@@ -18,8 +18,7 @@ use sha2::{Digest, Sha384};
 use common::{enclave_proc_command_send_single, get_sockets_dir_path};
 use common::{EnclaveProcessCommandType, NitroCliErrorEnum, NitroCliFailure, NitroCliResult};
 use common::commands_parser::{BuildEnclavesArgs, EmptyArgs, RunEnclavesArgs};
-use common::json_output::{DescribeEifInfo, EnclaveBuildInfo, EnclaveRunInfo, EnclaveTerminateInfo};
-use common::logger::EnclaveProcLogWriter;
+use common::json_output::{DescribeEifInfo, EnclaveBuildInfo, EnclaveTerminateInfo};
 use eif_defs::eif_hasher::EifHasher;
 use eif_utils::{EifReader, get_pcrs};
 pub use eif_utils::EifBuilder;
@@ -42,10 +41,6 @@ pub const VMADDR_CID_HYPERVISOR: u32 = 0;
 
 /// An offset applied to an enclave's CID in order to determine its console port.
 pub const CID_TO_CONSOLE_PORT_OFFSET: u32 = 10000;
-
-/// Action name of running an enclave
-pub const RUN_ENCLAVE_STR: &str = "Run Enclave";
-const NEW_NAME_STR: &str = "New Enclave Name";
 
 /// Build an enclave image file with the provided arguments.
 pub fn build_enclaves(args: BuildEnclavesArgs) -> NitroCliResult<(File, BTreeMap<String, String>)> {
@@ -186,48 +181,6 @@ pub fn new_enclave_name(run_args: RunEnclavesArgs, names: Vec<String>) -> NitroC
     }
 
     Ok(result_name)
-}
-
-/// Creates and runs a new Nitro enclave
-pub fn create_enclave(mut run_args: RunEnclavesArgs, logger: &EnclaveProcLogWriter) -> NitroCliResult<()> {
-    let mut replies: Vec<UnixStream> = vec![];
-    let mut comm = enclave_proc_comm::enclave_proc_spawn(&logger)
-        .map_err(|err| {
-            err.add_subaction("Failed to spawn enclave process".to_string())
-                .set_action(RUN_ENCLAVE_STR.to_string())
-        })?;
-
-        let names = get_all_enclave_names()
-            .map_err(|e| {
-                e.add_subaction("Failed to handle all enclave process replies".to_string())
-                    .set_action("Get Enclaves Name".to_string())
-            })?;
-        run_args.enclave_name = Some(
-            new_enclave_name(run_args.clone(), names)
-                .map_err(|err| {
-                    err.add_subaction("Failed to assign a new enclave name".to_string())
-                        .set_action(NEW_NAME_STR.to_string())
-                })?
-        );
-
-        enclave_proc_command_send_single(
-            EnclaveProcessCommandType::Run,
-            Some(&run_args),
-            &mut comm,
-        )
-        .map_err(|e| {
-            e.add_subaction("Failed to send single command".to_string())
-                .set_action(RUN_ENCLAVE_STR.to_string())
-        })?;
-
-        info!("Sent command: Run");
-        replies.push(comm);
-        enclave_process_handle_all_replies::<EnclaveRunInfo>(&mut replies, 0, false, vec![0])
-            .map_err(|e| {
-                e.add_subaction("Failed to handle all enclave process replies".to_string())
-                    .set_action(RUN_ENCLAVE_STR.to_string())
-            })?;
-    Ok(())
 }
 
 /// Returns information related to the given EIF
