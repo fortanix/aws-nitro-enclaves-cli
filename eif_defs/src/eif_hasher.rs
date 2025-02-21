@@ -10,6 +10,7 @@ use std::io::Write;
 use std::vec::Vec;
 
 use serde::{Deserialize, Serialize};
+use sha2::digest::FixedOutputReset;
 
 /// EifHasher class
 ///
@@ -22,7 +23,7 @@ use serde::{Deserialize, Serialize};
 /// 3. digest = Hash(Concatenate(digest, block))
 /// 4. Goto step 2
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EifHasher<T: Digest + Debug + Write + Clone> {
+pub struct EifHasher<T: Digest + Debug + Write + Clone + FixedOutputReset> {
     /// The bytes that have not been hashed yet, they get hashed
     /// once we gather block_size bytes.
     pub block: Vec<u8>,
@@ -44,7 +45,7 @@ fn initial_digest(len: usize) -> Vec<u8> {
     vec![0; len]
 }
 
-impl<T: Digest + Debug + Write + Clone> EifHasher<T> {
+impl<T: Digest + Debug + Write + Clone + FixedOutputReset> EifHasher<T> {
     pub fn new(block_size: usize, mut hasher: T) -> Result<Self, String> {
         let output_size = hasher.finalize_reset().len();
         if block_size > 0 && output_size * 2 > block_size {
@@ -113,7 +114,7 @@ impl<T: Digest + Debug + Write + Clone> EifHasher<T> {
     }
 }
 
-impl<T: Digest + Debug + Write + Clone> Write for EifHasher<T> {
+impl<T: Digest + Debug + Write + Clone + FixedOutputReset> Write for EifHasher<T> {
     fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
         if self.block_size == 0 {
             self.hasher.write_all(buf)?;
@@ -142,6 +143,7 @@ mod tests {
     use super::EifHasher;
     use crate::eif_hasher::initial_digest;
     use sha2::{Digest, Sha256, Sha384, Sha512};
+    use sha2::digest::FixedOutputReset;
     use std::fmt::Debug;
     use std::io::Write;
 
@@ -168,7 +170,7 @@ mod tests {
         hash_less_values_than_block_size(Sha384::new(), INPUT_BLOCK_SIZE_SHA384);
     }
 
-    fn hash_less_values_than_block_size<T: Digest + Debug + Write + Clone>(
+    fn hash_less_values_than_block_size<T: Digest + Debug + Write + Clone + FixedOutputReset>(
         mut hasher_alg: T,
         block_size: usize,
     ) {
@@ -208,7 +210,7 @@ mod tests {
         hash_exact_block_size_values(Sha512::new(), INPUT_BLOCK_SIZE_SHA512);
     }
 
-    fn hash_exact_block_size_values<T: Digest + Debug + Write + Clone>(
+    fn hash_exact_block_size_values<T: Digest + Debug + Write + Clone + FixedOutputReset>(
         mut hasher_alg: T,
         block_size: usize,
     ) {
@@ -249,7 +251,7 @@ mod tests {
         hash_more_values_than_block_size(Sha512::new(), INPUT_BLOCK_SIZE_SHA512);
     }
 
-    fn hash_more_values_than_block_size<T: Digest + Debug + Write + Clone>(
+    fn hash_more_values_than_block_size<T: Digest + Debug + Write + Clone + FixedOutputReset>(
         mut hasher_alg: T,
         block_size: usize,
     ) {
@@ -293,7 +295,7 @@ mod tests {
         hash_with_writes_of_different_sizes(Sha512::new(), INPUT_BLOCK_SIZE_SHA512);
     }
 
-    fn hash_with_writes_of_different_sizes<T: Digest + Debug + Write + Clone>(
+    fn hash_with_writes_of_different_sizes<T: Digest + Debug + Write + Clone + FixedOutputReset>(
         hasher_alg: T,
         block_size: usize,
     ) {

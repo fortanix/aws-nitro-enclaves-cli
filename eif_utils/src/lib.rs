@@ -30,6 +30,7 @@ use openssl::ec::EcKey;
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use sha2::{Digest, Sha384};
+use sha2::digest::FixedOutputReset;
 
 use eif_defs::{
     EIF_MAGIC, EifHeader, EifSectionHeader, EifSectionType, MAX_NUM_SECTIONS, PcrInfo, PcrSignature,
@@ -68,7 +69,7 @@ impl SignEnclaveInfo {
 }
 
 /// Utility function to calculate PCRs, used at build and describe.
-pub fn get_pcrs<T: Digest + Debug + Write + Clone>(
+pub fn get_pcrs<T: Digest + Debug + Write + Clone + FixedOutputReset>(
     image_hasher: &mut EifHasher<T>,
     bootstrap_hasher: &mut EifHasher<T>,
     app_hasher: &mut EifHasher<T>,
@@ -115,7 +116,7 @@ pub fn get_pcrs<T: Digest + Debug + Write + Clone>(
     Ok(measurements)
 }
 
-pub struct EifBuilder<T: Digest + Debug + Write + Clone> {
+pub struct EifBuilder<T: Digest + Debug + Write + Clone + FixedOutputReset> {
     kernel: Vec<u8>,
     cmdline: Vec<u8>,
     ramdisks: Vec<Vec<u8>>,
@@ -137,7 +138,7 @@ pub struct EifBuilder<T: Digest + Debug + Write + Clone> {
     eif_crc: crc32::Digest,
 }
 
-impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
+impl<T: Digest + Debug + Write + Clone + FixedOutputReset> EifBuilder<T> {
     pub fn new(
         kernel_path: &Path,
         cmdline: String,
