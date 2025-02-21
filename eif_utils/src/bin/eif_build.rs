@@ -17,6 +17,7 @@ use std::path::Path;
 use clap::{App, Arg};
 use eif_utils::{get_pcrs, EifBuilder, SignEnclaveInfo};
 use sha2::{Digest, Sha256, Sha384, Sha512};
+use sha2::digest::FixedOutputReset;
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -152,7 +153,7 @@ fn main() {
     }
 }
 
-pub fn build_eif<T: Digest + Debug + Write + Clone>(
+pub fn build_eif<T: Digest + Debug + Write + Clone + FixedOutputReset>(
     kernel_path: &str,
     cmdline: &str,
     ramdisks: Vec<&str>,
